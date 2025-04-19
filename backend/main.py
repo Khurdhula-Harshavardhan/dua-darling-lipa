@@ -7,7 +7,9 @@ import io
 from fastapi import FastAPI, Request, UploadFile, File, HTTPException
 from fastapi.responses import StreamingResponse
 from sse_starlette.sse import EventSourceResponse
+from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+
 
 # --- Safe‑serialization patch for XTTS configs ---
 import torch
@@ -33,6 +35,13 @@ from scipy.io.wavfile import write
 load_dotenv()
 
 app = FastAPI(title="Voice-Chat Backend with SSE")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # your front‑end origin
+    allow_credentials=True,
+    allow_methods=["*"],                       # or restrict to ["GET","POST"]
+    allow_headers=["*"],                       # or list specific headers
+)
 
 # 1) Google Speech-to-Text client
 speech_client = speech.SpeechClient()
