@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+google-cloud-speech
+ollama
+numpy
+scipy
+TTS==0.20.6         
+python-dotenv
