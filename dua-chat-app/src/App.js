@@ -163,32 +163,62 @@ function App() {
         const encodedText = encodeURIComponent(text);
         const audioUrl = `http://localhost:8000/stream_tts/?text=${encodedText}`;
         
-        audioRef.current = new Audio(audioUrl);
+        console.log('Setting up audio with URL:', audioUrl);
         
-        audioRef.current.oncanplaythrough = () => {
-          console.log('Audio can play through');
-        };
+        // Create an audio context instead of using the Audio API
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioContext = new AudioContext();
         
-        audioRef.current.onplay = () => {
-          console.log('Audio started playing');
-        };
+        console.log('Fetching audio data from server...');
         
-        audioRef.current.onended = () => {
-          console.log('Audio playback complete');
-          resolve();
-        };
-        
-        audioRef.current.onerror = (e) => {
-          console.error('Audio error:', e);
-          reject(new Error('Error playing audio'));
-        };
-        
-        audioRef.current.play().catch(error => {
-          console.error('Audio playback failed:', error);
-          reject(error);
-        });
+        // Fetch the audio data as an ArrayBuffer
+        fetch(audioUrl)
+          .then(response => {
+            if (!response.ok) {
+              throw new Error(`HTTP error! Status: ${response.status}`);
+            }
+            console.log('Response headers:', response.headers);
+            return response.arrayBuffer();
+          })
+          .then(arrayBuffer => {
+            console.log('Audio data received, size:', arrayBuffer.byteLength, 'bytes');
+            if (arrayBuffer.byteLength === 0) {
+              throw new Error('Received empty audio data');
+            }
+            
+            // Set speaking state
+            setIsSpeaking(true);
+            
+            // Decode the audio data
+            return audioContext.decodeAudioData(arrayBuffer);
+          })
+          .then(audioBuffer => {
+            console.log('Audio decoded successfully, duration:', audioBuffer.duration, 's');
+            
+            // Create a buffer source
+            const source = audioContext.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(audioContext.destination);
+            
+            // Handle completion
+            source.onended = () => {
+              console.log('Audio playback complete');
+              setIsSpeaking(false);
+              resolve();
+            };
+            
+            // Start playback
+            console.log('Starting audio playback');
+            source.start(0);
+          })
+          .catch(error => {
+            console.error('Error with audio processing:', error);
+            setIsSpeaking(false);
+            reject(error);
+          });
       } catch (err) {
-        console.error('Error setting up audio:', err);
+        console.error('Error setting up audio context:', err);
+        setIsSpeaking(false);
         reject(err);
       }
     });

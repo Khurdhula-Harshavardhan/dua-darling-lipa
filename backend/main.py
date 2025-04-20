@@ -4,11 +4,14 @@ import os
 import uuid
 import io
 import json
+import asyncio
 from fastapi import FastAPI, Request, UploadFile, File, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 from dotenv import load_dotenv
+import nltk
+import wave
 
 # --- Safe‑serialization patch for XTTS configs ---
 import torch
@@ -31,10 +34,17 @@ from scipy.io.wavfile import write
 # Load environment variables
 load_dotenv()
 
+# Initialize NLTK for sentence tokenization
+try:
+    # Download punkt tokenizer data properly
+    nltk.download('punkt')
+except LookupError:
+    pass
+
 app = FastAPI(title="Voice-Chat Backend with SSE")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["*"],  # Allow all origins for testing
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -73,26 +83,53 @@ def llama_stream(messages):
     ):
         yield chunk["message"]["content"]
 
-def tts_wav_stream(text: str):
+def split_into_sentences(text):
+    """Split text into sentences for better streaming."""
+    sentences = nltk.sent_tokenize(text)
+    # Group very short sentences together to avoid too many small audio chunks
+    result = []
+    current = ""
+    for sentence in sentences:
+        if len(current) + len(sentence) < 100:  # Combine short sentences
+            current += " " + sentence if current else sentence
+        else:
+            if current:
+                result.append(current)
+            current = sentence
+    if current:  # Don't forget the last chunk
+        result.append(current)
+    return result
+
+def get_complete_wav(text):
+    """Generate a complete WAV file in memory"""
+    print(f"Generating TTS for: {text[:50]}...")
+    
+    # Get the full audio from TTS
     wav = tts.tts(
         text=text,
         speaker=None,
         language="en",
         speaker_wav=DUA_PROMPT,
-        split_sentences=True,
     )
-    arr = np.array(wav)
-    if arr.dtype in (np.float32, np.float64):
-        arr = (arr * 32767).astype(np.int16)
+    
+    sample_rate = tts.synthesizer.output_sample_rate
+    print(f"Generated audio with sample rate: {sample_rate}Hz, length: {len(wav)} samples")
+    
+    # Convert to int16 audio
+    if isinstance(wav, (list, np.ndarray)):
+        arr = np.array(wav)
+        if arr.dtype in (np.float32, np.float64):
+            arr = (arr * 32767).astype(np.int16)
+        else:
+            arr = arr.astype(np.int16)
     else:
-        arr = arr.astype(np.int16)
-    buf = io.BytesIO()
-    sr = tts.synthesizer.output_sample_rate
-    write(buf, sr, arr)
-    data = buf.getvalue()
-    chunk_size = 4096
-    for i in range(0, len(data), chunk_size):
-        yield data[i:i+chunk_size]
+        raise TypeError(f"Unexpected TTS output type: {type(wav)}")
+        
+    # Write to in-memory buffer
+    wav_buffer = io.BytesIO()
+    write(wav_buffer, sample_rate, arr)
+    wav_buffer.seek(0)
+    return wav_buffer.read()
 
 @app.post("/transcribe/")
 async def upload_and_transcribe(file: UploadFile = File(...)):
@@ -130,7 +167,25 @@ async def stream_chat(
 
 @app.get("/stream_tts/")
 async def stream_tts(text: str):
+    print(f"Received TTS request for text: {text[:50]}...")
+    
+    # For simpler, more compatible implementation, generate the complete WAV first
+    wav_data = get_complete_wav(text)
+    
+    headers = {
+        "Content-Type": "audio/wav",
+        "Cache-Control": "no-cache",
+        "Access-Control-Allow-Origin": "*",
+    }
+    
+    # Return the full WAV file as a response, no streaming
     return StreamingResponse(
-        tts_wav_stream(text),
+        io.BytesIO(wav_data),
         media_type="audio/wav",
+        headers=headers
     )
+
+# Health check endpoint for debugging
+@app.get("/health")
+async def health_check():
+    return {"status": "ok", "tts_loaded": tts is not None}
