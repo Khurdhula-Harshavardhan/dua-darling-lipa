@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
 
+
 function App() {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
@@ -124,7 +125,7 @@ function App() {
   const streamChat = (prompt) => {
     return new Promise((resolve, reject) => {
       try {
-        const encodedPrompt = encodeURIComponent(prompt);
+        const encodedPrompt = encodeURIComponent("keep your response short to this:"+prompt);
         const eventSource = new EventSource(`http://localhost:8000/stream_chat/?prompt=${encodedPrompt}`);
         
         let fullResponse = '';
